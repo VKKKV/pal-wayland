@@ -1,0 +1,46 @@
+# pal-wayland player settings; CLI options take priority.
+# [keymap] is also compiled into the ELF as its built-in default keymap.
+# Other sections are example player settings, not defaults for every mode.
+version = 1
+
+[video]
+renderer = "wgpu" # wgpu | softbuffer; restart required
+
+[audio]
+output = "pipewire" # off | pipewire; restart required
+volume = 100 # integer percent, 0..100; live
+muted = false # live
+
+[keymap]
+# Left side = physical QWERTY position; right side = DOS key. Changes apply live.
+# Software Colemak/Dvorak does not change physical names; firmware remaps may.
+# Built-in movement is WASD + arrow keys, even without a config file.
+# Unlisted keys keep built-in DOS bindings; "None" disables a physical key.
+# --controls shows effective mappings and source=default|user.
+# Up / left / down / right: edit these pairs to choose your movement keys.
+KeyW = "ArrowUp"
+KeyA = "ArrowLeft"
+KeyS = "ArrowDown"
+KeyD = "ArrowRight"
+ArrowUp = "ArrowUp"
+ArrowLeft = "ArrowLeft"
+ArrowDown = "ArrowDown"
+ArrowRight = "ArrowRight"
+KeyE = "KeyE"
+KeyQ = "KeyQ"
+Enter = "Enter"
+Space = "Space"
+Escape = "Escape"
+ControlLeft = "ControlLeft"
+ShiftLeft = "ShiftLeft"
+# To disable a key, replace its target with "None".
+
+[paths]
+# Relative paths use this config file's directory, never the game cwd.
+# No shell variables or ~ expansion. Paths require restart.
+# resource_root = "/path/to/pal-layout"
+# saves = "/path/to/private/saves"
+
+[reload]
+enabled = true
+interval_ms = 500 # 100..5000

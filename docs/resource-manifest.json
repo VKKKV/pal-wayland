@@ -1,0 +1,205 @@
+{
+  "source_url": "https://archive.org/details/pal1_1995",
+  "download_url": "https://archive.org/download/pal1_1995/GC050.BIN",
+  "volume_id": "GC050",
+  "retrieved_date": "2026-10-09",
+  "provenance": "Community archival upload; not an authenticated official distribution. Retail revision/language not conclusively verified.",
+  "rights": "Copyrighted game data; no redistribution permission established. Local analysis only.",
+  "download_scope": "Complete MODE1/2352 data track 1 only, first 32544624 bytes. CD audio tracks not downloaded.",
+  "raw_track_sha256": "7d5e5be3c47b925222f23ade5144d34942ce657a11fc9234927c5689e1c16196",
+  "iso_sha256": "73379b186bb69702451cfde18cd8794ad3e565fc6864245d760d86d1b6f7636b",
+  "files": [
+    {
+      "name": "0.RPG",
+      "size": 183488,
+      "sha256": "d89aa4225aab9b4b81651597934c0325a8159e63310caaaa4787651ecc529653"
+    },
+    {
+      "name": "ABC.MKF",
+      "size": 1022564,
+      "sha256": "ef2920716b87b5bd0ecb184cbbcf8585512184bc0cbe4dfff07f8a4617f2af0b"
+    },
+    {
+      "name": "BALL.MKF",
+      "size": 134704,
+      "sha256": "be8e7218ee21baf64eaa90ec9f27967544a1b0136ce490604ac5f6dedb22830b"
+    },
+    {
+      "name": "DATA.MKF",
+      "size": 66418,
+      "sha256": "d9e82696a42d93f9623c63714a68a12645c7d650776eaa8510ec27b7c35e819a"
+    },
+    {
+      "name": "DISK0.BAT",
+      "size": 276,
+      "sha256": "6b4f4c498bb0679f03cf64e60da80decdfd4a2ebb0c57e45e64dd71ef8c1a677"
+    },
+    {
+      "name": "DISK1.BAT",
+      "size": 148,
+      "sha256": "9118b36f4fb17b5166d3c1500e2308f8de3c07bf2326de7a52f85deb4c2917f6"
+    },
+    {
+      "name": "F.MKF",
+      "size": 186966,
+      "sha256": "6fc9a9978dd06bee8e381c80e68683b6f3033c2aa40f61eb0e1a2194fc570f65"
+    },
+    {
+      "name": "FBP.MKF",
+      "size": 1128064,
+      "sha256": "f38d0243a4f635886f27324c2a44016e7ff46db2146c853ab8edda12b8d5652c"
+    },
+    {
+      "name": "FIRE.MKF",
+      "size": 834728,
+      "sha256": "eab713c53b4236f4aeefd30239675d62e887f10bb576ce1950a5be5b0d7458dd"
+    },
+    {
+      "name": "GOP.MKF",
+      "size": 11530322,
+      "sha256": "dbb17aeb8fcef6e24232b05abb58d5e9acf06a868b73bc0dc6c9a9e955fffb9c"
+    },
+    {
+      "name": "INSTALL.EXE",
+      "size": 83408,
+      "sha256": "fe230933032bb0a32840d7851e74e9ee1e06663b094ab5235e32437f52c4ce53"
+    },
+    {
+      "name": "JS3.EXE",
+      "size": 26097,
+      "sha256": "f23645b8ae5b007dd8a2211d9f43b9427a2d330ece361cc8f18ceee8907750be"
+    },
+    {
+      "name": "M.MSG",
+      "size": 212668,
+      "sha256": "f6480a5095e8cc358ecb3e8329ca80996c6068c34327f2f86ec03375ad40b654"
+    },
+    {
+      "name": "MAP.MKF",
+      "size": 1532520,
+      "sha256": "a40f22319d70a97a8871dfc85494c2d28e793c1e10d752734ab8f61704355066"
+    },
+    {
+      "name": "MGO.MKF",
+      "size": 1577442,
+      "sha256": "a9f9fc0ceeccb354906a96eaf6003f9c7ece8db6789856144201d926f5ff76b1"
+    },
+    {
+      "name": "MIDI.MKF",
+      "size": 762442,
+      "sha256": "70587d762bdcea0a6e07f0f13808993045a6f382c713f0ad81793a7f6991f913"
+    },
+    {
+      "name": "MPU401.DRV",
+      "size": 2989,
+      "sha256": "c7262592950acd42db5f7336cb4ecb24c2757f6a557302895143a5018f0f67d5"
+    },
+    {
+      "name": "MUS.MKF",
+      "size": 331284,
+      "sha256": "8367c9d34331f67b20b12380e809a38d3313cae199f260d272d07fcf55e11a21"
+    },
+    {
+      "name": "NVC-0005.EXE",
+      "size": 461377,
+      "sha256": "4624fb8554b79111ed5336d7040602737f76262cf4a80e5754ffc724b00fca2d"
+    },
+    {
+      "name": "PAL.EXE",
+      "size": 102831,
+      "sha256": "f02797b352afde77e27e979cc8bdb340d0b0a0ded523dad19a642de6a177c24d"
+    },
+    {
+      "name": "PAL.JS3",
+      "size": 78,
+      "sha256": "e513b17b116e31b936b331eea70e11b6974c407fce1db687cb6cb113bbbb0dad"
+    },
+    {
+      "name": "PALS.EXE",
+      "size": 102187,
+      "sha256": "5ba0b82e6eb88095a5fb443dc6c4d78f97ffc5fa11db906b8e8dd5b50f86aca0"
+    },
+    {
+      "name": "PAT.MKF",
+      "size": 8488,
+      "sha256": "78b08ef4c4630b703c714da25ab6482d4524a577c56c9554a369bbf30cc67eab"
+    },
+    {
+      "name": "PLAY.BAT",
+      "size": 25,
+      "sha256": "069ed241abce9fa6b57ba9cc16bbdb65ab186374931a3d83217ff1b9f606cfce"
+    },
+    {
+      "name": "README",
+      "size": 82,
+      "sha256": "283f5285091edba172003964b14d055c2fc9629974a1b82da89de61ee0b34479"
+    },
+    {
+      "name": "RGM.MKF",
+      "size": 453202,
+      "sha256": "fbeb7cbafd374af8c07088ab18996edcadd6ec52b8bb0a0af644c2cee4e26bac"
+    },
+    {
+      "name": "RNG.MKF",
+      "size": 4546074,
+      "sha256": "226a7932b94548071ecfb6274ac069f890ea347aef99c79c72b69655457310a3"
+    },
+    {
+      "name": "SETUP.DAT",
+      "size": 20,
+      "sha256": "c4f2ea4e287b30f1f55a61aa5d44564229a41895aaf55e84aafc7b57deb92224"
+    },
+    {
+      "name": "SSS.MKF",
+      "size": 569640,
+      "sha256": "8ebbbcfa5bdae5fe6b73752e3a6e6d3fd28d6fa857ffefcb6c8c0242eaf0252c"
+    },
+    {
+      "name": "VOC.MKF",
+      "size": 1997044,
+      "sha256": "c6e14eaaff50979df269b7d6d5f7401cb354be38e3ad737e4ca3ec473c1c5ab3"
+    },
+    {
+      "name": "WOR16.ASC",
+      "size": 5088,
+      "sha256": "d28985aee96b96981be1542172f6f32509541dec325163e857cd677f56dad8f9"
+    },
+    {
+      "name": "WOR16.FON",
+      "size": 77986,
+      "sha256": "2631bfa2b70333ad85d6e32edf7dedb5e888a3d34ee31f0f2da3f7d8599cd5e3"
+    },
+    {
+      "name": "WORD.DAT",
+      "size": 5650,
+      "sha256": "856fd6649a3e5bf143af30281eb33b2c67b1f6776290ce9650b065b1f78f49bb"
+    }
+  ],
+  "unpacked_files": [
+    {
+      "name": "PAL.raw.exe",
+      "size": 210128,
+      "sha256": "593a9b267fbb4f15281774f002e077e5eb208593028e65b9b526e7081a78d2d9"
+    },
+    {
+      "name": "PALS.raw.exe",
+      "size": 209040,
+      "sha256": "5e17a9d0df4ac0d5a8c109144ff06cc0c93c8771d60109aea99f3547ea5024f7"
+    },
+    {
+      "name": "PAL.unpacked.exe",
+      "size": 192546,
+      "sha256": "7ff939f96811bc70b4f01fb4a0a8fc49a86aa6d27e052e4ab90e8c47a7f68b1a"
+    },
+    {
+      "name": "PALS.unpacked.exe",
+      "size": 191894,
+      "sha256": "78aa5cd18755a53549b4f4a91c082f2fce0ad49a51dcc23660c475597ee598e4"
+    }
+  ],
+  "tools": {
+    "deark_commit": "8f2db0af0b5e322eb19a7d9cf75505b8bf236a5d",
+    "masm2c_observed_head": "9507335f2676ed5d2d505153eed6d4fa552485af",
+    "masm2c_source_archive_sha256": "36a1497d40602505f1fcadae9a80823da7e253cf1b8705e1b2391cc1b3624ce9"
+  }
+}

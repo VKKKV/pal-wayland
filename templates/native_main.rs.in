@@ -1,0 +1,310 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#![forbid(unsafe_code)]
+mod translated;
+use pal_wayland::{runtime::Machine, semantics::Flags};
+use std::{env, fs, io::{Write, BufWriter}, path::Path, process::ExitCode};
+
+// The helper is a trusted exact executable path, never a shell command.
+#[derive(Default)]
+struct AudioConfig { enabled:bool, helper:Option<String>, startup:Option<pal_wayland::native_startup::Startup>, gain:Option<(u8,bool)> }
+struct RealtimeAudio {
+    output:Option<pal_wayland::audio_output::AudioOutput>,
+    pending:bool,
+}
+fn audio_progress(p:pal_wayland::audio_output::OutputProgress, disposition:&str) {
+    eprintln!("audio-output {disposition} submitted_frames={} source_frames={} sfx_frames={} pipe_written_frames={} sink_written_frames={} underrun_silence_frames={} buffered_frames={} device_played=unknown",
+        p.submitted_frames,p.source_frames,p.sfx_frames,p.pipe_written_frames,p.sink_written_frames,p.underrun_silence_frames,p.buffered_frames);
+}
+impl RealtimeAudio {
+    fn start(config:AudioConfig,m:&mut Machine)->Result<Self,String>{
+        let mut output=if let Some(helper)=config.helper {
+            let mut command=std::process::Command::new(&helper);
+            // No implicit argv. Describe the raw stdin contract explicitly.
+            command.env("PAL_PCM_FORMAT","s16ne").env("PAL_PCM_RATE","44100")
+                .env("PAL_PCM_CHANNELS","2").env("PAL_PCM_INTERLEAVED","1");
+            let output=pal_wayland::audio_output::AudioOutput::spawn_transport(command).map_err(|e|e.to_string())?;
+            eprintln!("audio-output backend=pipewire transport=explicit-helper helper={helper:?} format=s16ne rate=44100 channels=2 readiness=unconfirmed");
+            output
+        }else{
+            let output=pal_wayland::audio_output::AudioOutput::start_pipewire().map_err(|e|e.to_string())?;
+            eprintln!("audio-output backend=pipewire transport=in-process format=s16ne rate=44100 channels=2 readiness=streaming");
+            output
+        };
+        if let Some((volume,muted))=config.gain {output.set_gain(volume,muted).map_err(|e|e.to_string())?;}
+        // Arm after spawning/mounting, before the first guest instruction.
+        m.start_audio_timeline();
+        output.advance_machine(0,m).map_err(|e|e.to_string())?;
+        Ok(Self{output:Some(output),pending:false})
+    }
+    fn advance(&mut self,m:&mut Machine)->Result<bool,String>{
+        let now=m.elapsed_ns();
+        let service=self.output.as_mut().unwrap().service_machine(now,m).map_err(|e|e.to_string())?;
+        self.pending=!service.is_ready();
+        Ok(!self.pending)
+    }
+    fn finish(mut self)->Result<(),String>{
+        let output=self.output.take().unwrap();
+        let p=output.finish(std::time::Duration::from_millis(250)).map_err(|e|e.to_string())?;
+        audio_progress(p,"finished");Ok(())
+    }
+}
+impl Drop for RealtimeAudio {
+    fn drop(&mut self){
+        // Window close/error aborts; AudioOutput cancels/kills/reaps its child.
+        if let Some(output)=&self.output {audio_progress(output.progress(),"aborted");}
+    }
+}
+
+struct ConfigRuntime { monitor:pal_wayland::player_config::HotReload, active:bool }
+impl ConfigRuntime {
+    fn new(initial:&pal_wayland::player_config::InitialConfig)->Self {
+        Self{monitor:initial.monitor(std::time::Instant::now()),active:initial.path.is_some()}
+    }
+    fn poll(&mut self,realtime:&mut Option<RealtimeAudio>)->Option<std::collections::BTreeMap<String,(u8,u8)>> {
+        if !self.active || !self.monitor.current().reload.enabled{return None;}
+        #[cfg(feature="profiling")]
+        let _config_span=pal_wayland::host_profile::Span::new("config_reload");
+        let candidate=self.monitor.poll(std::time::Instant::now());
+        if let Some(error)=self.monitor.take_error(){eprintln!("config-reload status=rejected retained=last-valid error={error:?}");}
+        let candidate=candidate?;
+        let c=candidate.document;
+        // Validation happened before commit; no backend/path changes here.
+        if let Some(output)=realtime.as_mut().and_then(|r|r.output.as_mut()) {
+            output.set_gain(c.audio.volume,c.audio.muted).expect("validated config gain");
+        }
+        let mut restart_fields=candidate.restart_fields;
+        if !c.reload.enabled{restart_fields.push("reload.reenable");}
+        eprintln!("config-reload status=applied live=input,volume,muted volume={} muted={} restart-required={}",
+            c.audio.volume,c.audio.muted,if restart_fields.is_empty(){"none".into()}else{restart_fields.join(",")});
+        Some(c.resolved_keymap())
+    }
+}
+fn number(s:&str)->Result<u16,String> {
+    u16::from_str_radix(s.strip_prefix("0x").unwrap_or(s),16).map_err(|e|e.to_string())
+}
+fn address(s:&str)->Result<(u16,u16),String>{let (cs,ip)=s.split_once(':').ok_or("expected CS:IP")?;Ok((number(cs)?,number(ip)?))}
+fn create(path:&str)->Result<fs::File,String>{fs::OpenOptions::new().write(true).create_new(true).open(path).map_err(|e|format!("{path}: {e}"))}
+fn state(m:&Machine)->String {
+    let r=&m.regs;
+    format!("{{\"step\":{},\"ax\":{},\"bx\":{},\"cx\":{},\"dx\":{},\"si\":{},\"di\":{},\"bp\":{},\"sp\":{},\"cs\":{},\"ds\":{},\"es\":{},\"ss\":{},\"ip\":{},\"flags\":{}}}",
+        m.steps,r.ax,r.bx,r.cx,r.dx,r.si,r.di,r.bp,r.sp,r.cs,r.ds,r.es,r.ss,r.ip,r.flags.bits())
+}
+fn prepare_saves(startup:&pal_wayland::native_startup::Startup,m:&mut Machine)->Result<(),String>{
+    startup.prepare_saves()?;
+    if startup.player{m.mount_saves(startup.saves.as_deref().unwrap()).map_err(|e|e.to_string())?;}
+    Ok(())
+}
+fn run()->Result<(),String>{
+    let args:Vec<_>=env::args().skip(1).collect();
+    // Help is deliberately independent of parsing, files and environment.
+    if args.iter().any(|a|a=="--help"||a=="-h"){print!("{}",pal_wayland::native_startup::HELP);return Ok(());}
+    if let Some(text)=pal_wayland::native_startup::Startup::control_output(&args)?{print!("{text}");return Ok(());}
+    let startup=pal_wayland::native_startup::Startup::from_env(&args)?;
+    let data=fs::read(&startup.exe).map_err(|e|format!("original EXE {}: {e}",startup.exe.display()))?;
+    let mut m=Machine::from_mz(&data,0x1010).map_err(|e|e.to_string())?;
+    m.regs.cs=@ENTRY_CS@;m.regs.ip=@ENTRY_IP@;
+    let mut limit=1_000_000_u64;let mut limit_explicit=false;let mut legacy_cd_header=false;let mut window=false;let mut ppm_path=None;let mut virtual_step_ns=None;let mut key_events:Vec<(u64,u8,u8,bool)>=Vec::new();
+    let mut stops=Vec::new();let mut trace_path=None;let mut memory_path=None;let mut state_path=None;let mut trace_after=0;let mut audio_path=None;let mut audio_max_frames=None;
+    let mut controls=ConfigRuntime::new(&startup.config);
+    let mut audio_config=AudioConfig::default();
+    audio_config.gain=Some((startup.config.document.audio.volume,startup.config.document.audio.muted));
+    let mut renderer="wgpu";
+    // Startup validates scalar values and effective combinations after TOML/CLI
+    // merge. This ordered pass applies them; resource/machine checks stay here.
+    let mut opts=startup.options.chunks_exact(2);
+    for pair in opts.by_ref(){match pair[0].as_str(){
+        "--key-event"=>{let fields:Vec<_>=pair[1].split(':').collect();let step=fields[0].parse().map_err(|_|"invalid key event step")?;let scan=number(fields[1])?;let ascii=number(fields[2])?;let pressed=fields[3]=="down";key_events.push((step,scan as u8,ascii as u8,pressed));},
+        "--renderer"=>renderer=pair[1].as_str(),
+        "--window"=>window=pair[1]=="yes",
+        "--audio-wav"=>audio_path=Some(pair[1].as_str()),
+        "--audio-max-frames"=>audio_max_frames=Some(pair[1].parse::<u64>().map_err(|_|"invalid audio-max-frames")?),
+        "--audio-output"=>audio_config.enabled=pair[1]=="pipewire",
+        "--audio-helper"=>audio_config.helper=Some(pair[1].clone()),
+        "--frame-ppm"=>ppm_path=Some(pair[1].as_str()),
+        "--assets"=>m.mount_assets(Path::new(&pair[1])).map_err(|e|e.to_string())?,
+        "--irq"=>{if pair[1]=="enabled"{m.enable_irqs().map_err(|e|e.to_string())?;}else{m.irq_enabled=false;}},
+        "--ram-top"=>m.configure_conventional_top(number(&pair[1])?).map_err(|e|e.to_string())?,
+        // Player saves may not exist yet: all resource/backend checks come first.
+        "--saves"=>{if !startup.player{m.mount_saves(Path::new(&pair[1])).map_err(|e|e.to_string())?;}},
+        "--cd-header"=>legacy_cd_header=true,
+        "--cd-bin"=>{let cue=Path::new(&pair[1]).with_extension("cue");m.cdrom=Some(pal_wayland::cdrom::CdRom::mount_bin_cue(Path::new(&pair[1]),&cue).map_err(|e|e.to_string())?);},
+        "--cd-iso"=>m.cdrom=Some(pal_wayland::cdrom::CdRom::mount(Path::new(&pair[1])).map_err(|e|e.to_string())?),
+        "--memory-input"=>{
+            let bytes=fs::read(&pair[1]).map_err(|e|e.to_string())?;
+            if bytes.len()!=0x100000{return Err("memory fixture must be exactly 1 MiB; not a full host-state save".into());}
+            m.memory=pal_wayland::semantics::GuestMemory::from_bytes(bytes,pal_wayland::semantics::A20::Disabled);
+        },
+        "--sound-blaster"=>{m.sound_blaster=if pair[1]=="yes"{Some(pal_wayland::sound_blaster::SoundBlaster::default())}else{None};},
+        "--opl"=>m.opl_absent=true,
+        "--x87"=>m.x87_present=pair[1]=="present",
+        "--virtual-step-ns"=>{let step:u64=pair[1].parse().map_err(|_|"invalid virtual-step-ns")?;virtual_step_ns=Some(step);m.virtual_elapsed_ns=Some(0);},
+        "--max-steps"=>{limit=pair[1].parse().map_err(|_|"invalid max-steps")?;limit_explicit=true;},
+        "--clock-centiseconds"=>m.clock_centiseconds=Some(pair[1].parse().map_err(|_|"invalid clock-centiseconds")?),
+        "--stop"=>stops.push(address(&pair[1])?),
+        "--trace-after"=>trace_after=pair[1].parse().map_err(|_|"invalid trace-after")?,
+        "--trace"=>trace_path=Some(pair[1].as_str()),
+        "--memory"=>memory_path=Some(pair[1].as_str()),
+        "--state"=>state_path=Some(pair[1].as_str()),
+        "--set"=>{
+            let (name,value)=pair[1].split_once('=').ok_or("expected REGISTER=HEX")?;let value=number(value)?;
+            match name.to_ascii_lowercase().as_str(){
+                "ax"=>m.regs.ax=value,"bx"=>m.regs.bx=value,"cx"=>m.regs.cx=value,"dx"=>m.regs.dx=value,
+                "si"=>m.regs.si=value,"di"=>m.regs.di=value,"bp"=>m.regs.bp=value,"sp"=>m.regs.sp=value,
+                "cs"=>m.regs.cs=value,"ds"=>m.regs.ds=value,"es"=>m.regs.es=value,"ss"=>m.regs.ss=value,"ip"=>m.regs.ip=value,
+                "flags"=>m.regs.flags=Flags::from_bits(value),_=>return Err(format!("unknown register {name}")),
+            }
+        },
+        _=>return Err(format!("unknown option {}",pair[0])),
+    }}
+    if !opts.remainder().is_empty(){return Err("option missing value".into());}
+    if legacy_cd_header{m.cdrom.as_mut().ok_or("legacy CD header requires a CD mount")?.enable_legacy_header13();}
+    // These depend on the successfully initialized Machine, not just options.
+    if audio_path.is_some()&&m.cdrom.is_none()&&m.sound_blaster.is_none(){return Err("audio-wav requires CD mount".into());}
+    if audio_config.enabled&&m.cdrom.is_none()&&m.sound_blaster.is_none(){return Err("audio-output requires CD mount".into());}
+    if m.sound_blaster.is_some(){m.opl_absent=true;}
+    m.retain_sfx_pcm=audio_path.is_some()||audio_config.enabled;
+    // Resolved dry-run is deliberately independent of compiled window support.
+    if startup.print_config{print!("{}",startup.config_text());return Ok(());}
+    #[cfg(not(feature="window"))]
+    if window{return Err("rebuild generated project with --features window".into());}
+    eprintln!("sound-blaster device={} base=0x220 irq=7 dma=1 opl={} sfx_pcm={}",
+        if m.sound_blaster.is_some(){"enabled"}else{"off"},
+        if m.opl_absent{"absent"}else{"unsupported"},
+        if m.retain_sfx_pcm{"mixed-consumer"}else{"muted-discard"});
+    if !audio_config.enabled{eprintln!("audio-output backend=off");}
+    if window {
+        #[cfg(feature="window")] if !limit_explicit{limit=u64::MAX;}
+        #[cfg(not(feature="window"))] let _=limit_explicit;
+        #[cfg(feature="window")] {let renderer=renderer.parse::<pal_wayland::wayland::RendererKind>()?;let keys=pal_wayland::wayland::keymap::KeyRouter::new(startup.config.document.resolved_keymap());audio_config.startup=Some(startup);return pal_wayland::wayland::run_with_renderer(WindowHost{m,limit,virtual_step_ns,audio_config:Some(audio_config),realtime:None,controls,keys},renderer);}
+        #[cfg(not(feature="window"))] {return Err("rebuild generated project with --features window".into());}
+    }
+    key_events.sort_by_key(|k|k.0);let mut key_events=key_events.into_iter().peekable();
+    // Reserve every explicitly requested output before executing any guest code.
+    let mut trace=trace_path.map(create).transpose()?.map(BufWriter::new);
+    let mut memory=memory_path.map(create).transpose()?;
+    let mut final_state=state_path.map(create).transpose()?;
+    let mut ppm=ppm_path.map(create).transpose()?;
+    let mut audio=audio_path.map(|p|pal_wayland::audio_capture::Capture::create(Path::new(p),audio_max_frames.unwrap()).map_err(|e|e.to_string())).transpose()?;
+    m.start_audio_timeline();
+    let mut realtime=if audio_config.enabled{Some(RealtimeAudio::start(audio_config,&mut m)?)}else{None};
+    prepare_saves(&startup,&mut m)?;
+    m.start_audio_timeline();
+    let mut calls=0u32;
+    m.begin_execution_batch();
+    let mut result=loop{
+        // Static INT metadata preserves old CD state before PLAY/PAUSE/STOP.
+        // Other work shares a bounded wall sample; no runtime decoding.
+        let boundary=translated::playback_boundary(&m);
+        let service_due=calls%32==0 || boundary || virtual_step_ns.is_some();
+        if service_due {m.begin_execution_batch();let _=controls.poll(&mut realtime);}
+        if service_due {if let Some(output)=&mut realtime {match output.advance(&mut m){
+            Err(e)=>break Err(e),
+            Ok(false)=>{std::thread::sleep(pal_wayland::audio_output::RECOVERY_RETRY_INTERVAL);calls=0;continue;},
+            Ok(true)=>{},
+        }}}
+        while key_events.peek().is_some_and(|k|k.0<=m.steps){let(_,scan,ascii,pressed)=key_events.next().unwrap();m.key_event(scan,ascii,pressed);}
+        if m.steps>=trace_after {if let Some(t)=&mut trace {writeln!(t,"{}",state(&m)).map_err(|e|e.to_string())?;m.refresh_execution_clock();}}
+        if stops.contains(&(m.regs.cs,m.regs.ip)){break Ok("requested-stop");}
+        if m.exit_code.is_some(){break Ok("DOS-exit");}
+        if m.steps>=limit{break Err(m.fault("static execution budget exceeded").to_string());}
+        if let Some(dt)=virtual_step_ns {m.virtual_elapsed_ns=Some(m.virtual_elapsed_ns.unwrap_or(0).saturating_add(dt));}
+        if service_due || virtual_step_ns.is_some() {
+            if let Some(c)=&mut audio {let now=m.elapsed_ns();if let Err(e)=c.advance_machine(now,&mut m){break Err(e.to_string());}}
+        }
+        if service_due {m.begin_execution_batch();}
+        if let Err(e)=translated::step(&mut m){break Err(e.to_string());}
+        calls=if boundary {0}else{calls.wrapping_add(1)};
+    };
+    m.end_execution_batch();
+    // Deliver the queued tail even on a guest budget fault; preserve that fault.
+    if let Some(output)=realtime {if let Err(e)=output.finish(){result=Err(match result{Err(original)=>format!("{original}; {e}"),Ok(_)=>e});}}
+    if let Some(c)=audio {let progress=c.finalize().map_err(|e|e.to_string())?;eprintln!("audio-capture frames={} source_frames={} sfx_frames={}",progress.frames_written,progress.source_frames,progress.sfx_frames);}
+    if let Some(t)=&mut trace{t.flush().map_err(|e|e.to_string())?;}
+    if let Some(f)=&mut memory{f.write_all(m.memory.as_bytes()).map_err(|e|e.to_string())?;}
+    if let Some(f)=&mut final_state{writeln!(f,"{}",state(&m)).map_err(|e|e.to_string())?;}
+    if let Some(f)=&mut ppm {
+        if !matches!(m.video_mode,0x12|0x13){eprintln!("frame unavailable: graphics mode not selected; execution result preserved");} else {
+        let(width,height,pixels)=m.frame().map_err(|e|e.to_string())?;
+        f.write_all(format!("P6\n{width} {height}\n255\n").as_bytes()).map_err(|e|e.to_string())?;
+        for pixel in pixels {f.write_all(&[(pixel>>16)as u8,(pixel>>8)as u8,pixel as u8]).map_err(|e|e.to_string())?;}
+    }}
+    if let Some(sb)=&m.sound_blaster {let s=sb.status();eprintln!("sound-blaster consumed_bytes={} completed_transfers={} irq_pending={} sfx_discarded_frames={}",s.consumed_bytes,s.completed_transfers,s.irq_pending,m.sfx_discarded_frames);
+        for (label, source) in [("first-completed",s.first_completed_source),("last-completed",s.last_completed_source),("last-playback",s.last_playback_source)] {
+            if let Some(d)=source {eprintln!("sound-blaster dma-source={} physical_start={:#x} transfer_bytes={} consumed_bytes={} fnv1a={:08x} time_constant={} initial_dma_count={:#x} start_ns={} completion_ns={:?}",label,d.physical_start,d.transfer_bytes,d.consumed_bytes,d.fnv1a,d.time_constant,d.initial_dma_count,d.start_ns,d.completion_ns);}
+        }
+    }
+    for line in &m.service_trace{eprintln!("service: {line}");}
+    if !m.console.is_empty(){eprintln!("guest-console: {}",String::from_utf8_lossy(&m.console));}
+    println!("{}",state(&m));
+    match result{Ok(reason)=>{println!("stop_reason: {reason}");if let Some(code)=m.exit_code{println!("guest_exit_code: {code}");if code!=0{return Err(format!("guest exited with code {code}"));}}Ok(())},Err(e)=>Err(e)}
+}
+#[cfg(feature="window")]
+struct WindowHost{m:Machine,limit:u64,virtual_step_ns:Option<u64>,audio_config:Option<AudioConfig>,realtime:Option<RealtimeAudio>,controls:ConfigRuntime,keys:pal_wayland::wayland::keymap::KeyRouter}
+#[cfg(feature="window")]
+impl pal_wayland::wayland::GameHost for WindowHost {
+    fn tick(&mut self)->Result<bool,String>{
+        // Lazy startup: Wayland initializes before any helper is opened; the
+        // baseline nevertheless precedes all guest execution.
+        if let Some(mut config)=self.audio_config.take(){
+            let startup=config.startup.take();
+            if config.enabled{self.realtime=Some(RealtimeAudio::start(config,&mut self.m)?);}
+            if let Some(startup)=startup{prepare_saves(&startup,&mut self.m)?;}
+            self.m.start_audio_timeline();
+        }
+        if let Some(bindings)=self.controls.poll(&mut self.realtime){
+            for (scan,ascii,pressed) in self.keys.set_bindings(bindings){self.m.key_event(scan,ascii,pressed);}
+        }
+        #[cfg(feature="profiling")]
+        let execution_span=pal_wayland::host_profile::Span::new("guest_execution");
+        self.m.begin_execution_batch();
+        let result=(|| {
+        let start=self.m.steps;let deadline=std::time::Instant::now()+std::time::Duration::from_millis(2);
+        let mut calls=0u32;
+        while self.m.steps-start<500_000 {
+            // Each batch is bounded by 32 calls (REP still <=64 elements).
+            // Slow host services are not preemptible and refresh on return.
+            let boundary=translated::playback_boundary(&self.m);
+            let service_due=calls%32==0 || boundary || self.virtual_step_ns.is_some();
+            if service_due {
+                self.m.begin_execution_batch();
+                if std::time::Instant::now()>=deadline{break;}
+                if let Some(output)=&mut self.realtime{if !output.advance(&mut self.m)?{break;}}
+                self.m.begin_execution_batch();
+            }
+            calls=calls.wrapping_add(1);
+            if let Some(code)=self.m.exit_code{return if code==0{Ok(false)}else{Err(format!("guest exit {code}"))};}
+            if self.m.steps>=self.limit{return Err("window instruction budget exceeded".into());}
+            if let Some(dt)=self.virtual_step_ns{self.m.virtual_elapsed_ns=Some(self.m.virtual_elapsed_ns.unwrap_or(0).saturating_add(dt));}
+            translated::step(&mut self.m).map_err(|e|e.to_string())?;
+            if boundary {calls=0;}
+            if self.m.waiting_for_key{break;}
+        }Ok(true)
+        })();
+        self.m.end_execution_batch();
+        #[cfg(feature="profiling")]
+        drop(execution_span);
+        result
+    }
+    fn retry_after(&self)->Option<std::time::Duration>{
+        self.realtime.as_ref().filter(|o|o.pending).map(|_|pal_wayland::audio_output::RECOVERY_RETRY_INTERVAL)
+    }
+    fn idle_wait(&self)->Option<std::time::Duration>{
+        self.m.waiting_for_key.then_some(std::time::Duration::from_millis(16))
+    }
+    fn frame(&self)->Result<pal_wayland::video::IndexedFrame,String>{
+        // Wayland may redraw before the first guest tick. Mode3 is a startup
+        // placeholder, not a synthesized text renderer or guest execution.
+        match self.m.video_mode {
+            3=>Ok(pal_wayland::video::IndexedFrame{indices:vec![0;pal_wayland::video::FRAME_BYTES],palette:[[0,0,0,255];256],pixel_mask:0xff}),
+            0x12=>Err("window backend mode12 dimensions not integrated".into()),
+            _=>self.m.presentation_indexed_frame().map_err(|e|e.to_string()),
+        }
+    }
+    fn key(&mut self,key:pal_wayland::wayland::KeyCode,pressed:bool){
+        for (scan,ascii,pressed) in self.keys.transition(&format!("{key:?}"),pressed){self.m.key_event(scan,ascii,pressed);}
+    }
+    fn release_input(&mut self){
+        for (scan,ascii,pressed) in self.keys.release_all(){self.m.key_event(scan,ascii,pressed);}
+    }
+}
+fn main()->ExitCode{match run(){Ok(())=>ExitCode::SUCCESS,Err(e)=>{eprintln!("pal-wayland: {e}");ExitCode::FAILURE}}}

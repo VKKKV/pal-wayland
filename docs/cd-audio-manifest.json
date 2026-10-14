@@ -1,0 +1,22 @@
+{
+  "source": "https://archive.org/download/pal1_1995/GC050.BIN",
+  "bytes": 237206256,
+  "sha1": "f699366c3feb4e7f12ac38f93cfed60ca39f1c5b",
+  "sha256": "475a0d8dd1a05f541eb7c9e3db7a02f9ba3d02716eba9086bf2c0d4295080549",
+  "matches_original_data_iso": true,
+  "cue": "assets/GC050.cue",
+  "tracks": 9,
+  "audio_tracks": 8,
+  "track_layout": [
+    [1, "MODE1/2352", "00:00:00"],
+    [2, "AUDIO", "03:04:37"],
+    [3, "AUDIO", "05:43:12"],
+    [4, "AUDIO", "07:59:57"],
+    [5, "AUDIO", "10:18:09"],
+    [6, "AUDIO", "12:53:25"],
+    [7, "AUDIO", "15:19:47"],
+    [8, "AUDIO", "17:39:64"],
+    [9, "AUDIO", "19:31:29"]
+  ],
+  "scope": "local copyrighted asset; not licensed for redistribution"
+}
